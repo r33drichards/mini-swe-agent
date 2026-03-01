@@ -243,13 +243,14 @@ class McpJsDockerEnvironmentConfig:
 class McpJsDockerEnvironment:
     """Execute JavaScript code via mcp-js running inside a Docker container.
 
-    This environment:
-    1. Starts a Docker container from the SWE-bench instance image
-    2. Copies the mcp-js binary into the container
-    3. Creates a permissive filesystem policy
-    4. Starts the mcp-js server inside the container
-    5. Executes JS code via the HTTP API
-    6. On submission, captures ``git diff`` via ``docker exec``
+    The agent has NO shell/bash access.  All interaction goes through the
+    mcp-js V8 runtime which exposes:
+
+    - ``fs.*`` — full filesystem access (read, write, mkdir, stat, …)
+    - ``fetch()`` — unrestricted HTTP client
+
+    On submission the environment captures ``git diff`` internally
+    (infrastructure-level, not agent-accessible).
     """
 
     def __init__(
@@ -295,7 +296,12 @@ class McpJsDockerEnvironment:
         self.logger.info(f"Started container {container_name} ({self.container_id[:12]})")
 
     def _setup_mcp_js(self):
-        """Copy the mcp-js binary and policy into the container, then start the server."""
+        """Copy the mcp-js binary and policies into the container, then start the server.
+
+        The server is started with permissive filesystem AND fetch (network)
+        policies so the agent can read/write any file and make HTTP requests
+        without restrictions.  No shell access is exposed to the agent.
+        """
         assert self.container_id
 
         # Copy mcp-js binary into container
@@ -312,31 +318,45 @@ class McpJsDockerEnvironment:
             timeout=10,
         )
 
-        # Create a permissive filesystem policy inside the container
-        fs_policy = json.dumps({
+        # Write permissive rego policies inside the container
+        # 1. Filesystem: allow all operations on all paths
+        # 2. Fetch: allow all HTTP methods to all domains
+        rego_files = {
+            "/tmp/fs_allow_all.rego": "package mcp.filesystem\ndefault allow = true\n",
+            "/tmp/fetch_allow_all.rego": "package mcp.fetch\ndefault allow = true\n",
+        }
+        for path, content in rego_files.items():
+            subprocess.run(
+                [self.config.executable, "exec", self.container_id,
+                 "bash", "-c", f"cat > {path} << 'REGO'\n{content}REGO"],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )
+
+        policies = json.dumps({
             "filesystem": {
                 "mode": "all",
                 "policies": [{
                     "url": "file:///tmp/fs_allow_all.rego",
                     "rule": "data.mcp.filesystem.allow",
                 }],
-            }
+            },
+            "fetch": {
+                "mode": "all",
+                "policies": [{
+                    "url": "file:///tmp/fetch_allow_all.rego",
+                    "rule": "data.mcp.fetch.allow",
+                }],
+            },
         })
-        rego_content = 'package mcp.filesystem\ndefault allow = true\n'
-        subprocess.run(
-            [self.config.executable, "exec", self.container_id,
-             "bash", "-c", f"echo '{rego_content}' > /tmp/fs_allow_all.rego"],
-            check=True,
-            capture_output=True,
-            timeout=10,
-        )
 
-        # Start mcp-js server in the background
+        # Start mcp-js server in the background with full fs + network access
         start_cmd = (
             f"/usr/local/bin/mcp-v8 --stateless "
             f"--http-port {self.config.mcp_js_port} "
             f"--execution-timeout {self.config.execution_timeout_secs} "
-            f"--policies-json '{fs_policy}' "
+            f"--policies-json '{policies}' "
             f">/dev/null 2>&1 &"
         )
         subprocess.run(
@@ -372,14 +392,20 @@ class McpJsDockerEnvironment:
 
         output_text = result.get("output", "")
         if output_text.lstrip().startswith("COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"):
-            # Capture the git diff from the container
-            diff = self._get_git_diff()
+            # Infrastructure-level: capture git diff for SWE-bench evaluation.
+            # This is NOT exposed to the agent — it runs after the agent signals
+            # completion and is used solely to produce the model_patch.
+            diff = self._capture_git_diff()
             result["output"] = f"COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n{diff}"
 
         return result
 
-    def _get_git_diff(self) -> str:
-        """Run git add + git diff --cached inside the container to capture changes."""
+    def _capture_git_diff(self) -> str:
+        """Infrastructure-only: run git add + git diff --cached to capture changes.
+
+        This is called by the harness after the agent signals completion.
+        The agent itself has no shell access.
+        """
         assert self.container_id
         cmd = [
             self.config.executable, "exec",
@@ -399,22 +425,6 @@ class McpJsDockerEnvironment:
         except Exception as e:
             self.logger.error(f"Failed to capture git diff: {e}")
             return f"Error capturing git diff: {e}"
-
-    def _docker_exec(self, command: str, cwd: str = "") -> dict[str, Any]:
-        """Fallback: execute a bash command directly via docker exec."""
-        assert self.container_id
-        cwd = cwd or self.config.cwd
-        cmd = [self.config.executable, "exec", "-w", cwd, self.container_id, "bash", "-lc", command]
-        result = subprocess.run(
-            cmd,
-            text=True,
-            timeout=self.config.timeout,
-            encoding="utf-8",
-            errors="replace",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        return {"output": result.stdout, "returncode": result.returncode}
 
     def cleanup(self):
         if getattr(self, "container_id", None) is not None:
