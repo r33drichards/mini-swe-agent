@@ -252,7 +252,7 @@ environment:
   environment_class: mcp_js_docker
 
 model:
-  model_name: "claude-sonnet-4-20250514"
+  model_name: "bedrock/us.anthropic.claude-opus-4-20250514-v1:0"
   model_kwargs:
     drop_params: true
     temperature: 0.0
