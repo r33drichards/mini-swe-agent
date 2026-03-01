@@ -27,6 +27,7 @@ class AgentConfig:
     action_observation_template: str = "Observation: {{output}}"
     step_limit: int = 0
     cost_limit: float = 3.0
+    code_block_language: str = "bash"
 
 
 class NonTerminatingException(Exception):
@@ -106,7 +107,8 @@ class DefaultAgent:
 
     def parse_action(self, response: dict) -> dict:
         """Parse the action from the message. Returns the action."""
-        actions = re.findall(r"```bash\n(.*?)\n```", response["content"], re.DOTALL)
+        lang = self.config.code_block_language
+        actions = re.findall(rf"```{re.escape(lang)}\n(.*?)\n```", response["content"], re.DOTALL)
         if len(actions) == 1:
             return {"action": actions[0].strip(), **response}
         raise FormatError(self.render_template(self.config.format_error_template, actions=actions))

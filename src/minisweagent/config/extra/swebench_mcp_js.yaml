@@ -1,0 +1,244 @@
+agent:
+  code_block_language: javascript
+  system_template: |
+    You are a helpful assistant that can interact multiple times with a JavaScript runtime to solve programming tasks.
+    You have access to the filesystem via the global `fs` API.
+    Your response must contain exactly ONE javascript code block with your code.
+
+    Include a THOUGHT section before your code where you explain your reasoning process.
+    Format your response as shown in <format_example>.
+
+    <format_example>
+    THOUGHT: Your reasoning and analysis here
+
+    ```javascript
+    // your code here
+    const content = await fs.readFile("/testbed/file.py");
+    console.log(content);
+    ```
+    </format_example>
+
+    Failure to follow these rules will cause your response to be rejected.
+
+    ## Available APIs
+
+    You are running in a V8 JavaScript runtime with filesystem access. The following APIs are available:
+
+    ### Console Output (always available)
+    - `console.log(value)` - Print output (this is how you see results)
+    - `console.error(value)` - Print to stderr
+
+    ### Filesystem (`fs` global object)
+    All fs operations are async and must be awaited:
+    - `await fs.readFile(path)` - Read a file as UTF-8 text
+    - `await fs.readFile(path, "buffer")` - Read a file as Uint8Array
+    - `await fs.writeFile(path, data)` - Write string or Uint8Array to file
+    - `await fs.appendFile(path, data)` - Append to a file
+    - `await fs.readdir(path)` - List directory entries (returns string[])
+    - `await fs.stat(path)` - Get file info ({size, isFile, isDirectory, ...})
+    - `await fs.exists(path)` - Check if path exists
+    - `await fs.mkdir(path, {recursive: true})` - Create directory
+    - `await fs.rm(path)` - Remove a file
+    - `await fs.rm(path, {recursive: true})` - Remove directory recursively
+    - `await fs.rename(oldPath, newPath)` - Rename/move
+    - `await fs.copyFile(src, dest)` - Copy a file
+
+    ### Important Notes
+    - Each code block runs in a **fresh** JavaScript isolate (no state carries over)
+    - Use `console.log()` to see output - this is your only way to observe results
+    - All filesystem paths are absolute (the testbed is at `/testbed`)
+    - You can use `async/await` at the top level
+    - ES module `import` syntax is NOT available
+
+  instance_template: |
+    <pr_description>
+    Consider the following PR description:
+    {{task}}
+    </pr_description>
+
+    <instructions>
+    # Task Instructions
+
+    ## Overview
+    You're a software engineer using a JavaScript runtime with filesystem access to fix code issues.
+    You'll be working with files in the `/testbed` directory.
+    Your task is to make changes to non-test source files to fix the issue described in the PR description.
+
+    IMPORTANT: This is an interactive process where you will think and write ONE JavaScript code block, see its output, then think and write your next code block.
+
+    For each response:
+    1. Include a THOUGHT section explaining your reasoning
+    2. Provide exactly ONE javascript code block to execute
+
+    ## Important Boundaries
+    - MODIFY: Regular source code files in /testbed
+    - DO NOT MODIFY: Tests, configuration files (pyproject.toml, setup.cfg, etc.)
+
+    ## Recommended Workflow
+    1. Explore the codebase structure
+
+    ```javascript
+    const entries = await fs.readdir("/testbed");
+    console.log(entries.join("\n"));
+    ```
+
+    2. Read relevant files to understand the issue
+
+    ```javascript
+    const content = await fs.readFile("/testbed/src/module.py");
+    console.log(content);
+    ```
+
+    3. Edit source files to fix the issue
+
+    ```javascript
+    let content = await fs.readFile("/testbed/src/module.py");
+    content = content.replace("old_code", "new_code");
+    await fs.writeFile("/testbed/src/module.py", content);
+    console.log("File updated successfully");
+    ```
+
+    4. Verify your changes
+
+    ```javascript
+    const content = await fs.readFile("/testbed/src/module.py");
+    // Print relevant section
+    const lines = content.split("\n");
+    lines.forEach((line, i) => {
+        if (i >= 49 && i <= 70) console.log(`${i+1}: ${line}`);
+    });
+    ```
+
+    5. Submit when done
+
+    ```javascript
+    console.log("COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT");
+    ```
+
+    ## Code Execution Rules
+    1. Each code block runs in a **completely fresh** JavaScript isolate
+    2. No state, variables, or imports carry over between executions
+    3. Use `console.log()` to output results
+    4. All `fs` operations must be awaited
+
+    ## Useful Patterns
+
+    ### Search for text in files
+    ```javascript
+    const { readdir, readFile, stat } = fs;
+    async function findInFiles(dir, pattern, ext = ".py") {
+        const entries = await readdir(dir);
+        for (const entry of entries) {
+            const fullPath = dir + "/" + entry;
+            const info = await stat(fullPath);
+            if (info.isDirectory && !entry.startsWith(".") && entry !== "node_modules" && entry !== "__pycache__") {
+                await findInFiles(fullPath, pattern, ext);
+            } else if (info.isFile && entry.endsWith(ext)) {
+                const content = await readFile(fullPath);
+                const lines = content.split("\n");
+                lines.forEach((line, i) => {
+                    if (line.includes(pattern)) {
+                        console.log(`${fullPath}:${i+1}: ${line.trim()}`);
+                    }
+                });
+            }
+        }
+    }
+    await findInFiles("/testbed", "search_term");
+    ```
+
+    ### Replace text in a file
+    ```javascript
+    let content = await fs.readFile("/testbed/path/to/file.py");
+    // Replace a specific block of code
+    const oldCode = `def old_function():
+        return None`;
+    const newCode = `def old_function():
+        return 42`;
+    content = content.replace(oldCode, newCode);
+    await fs.writeFile("/testbed/path/to/file.py", content);
+    console.log("Done");
+    ```
+
+    ### View file with line numbers
+    ```javascript
+    const content = await fs.readFile("/testbed/path/to/file.py");
+    const lines = content.split("\n");
+    lines.forEach((line, i) => console.log(`${String(i+1).padStart(4)}: ${line}`));
+    ```
+
+    ## Submission
+    When you've completed your work, issue exactly the following code:
+
+    ```javascript
+    console.log("COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT");
+    ```
+
+    This command will submit your work. You cannot continue working after submitting.
+    </instructions>
+
+  action_observation_template: |
+    <returncode>{{output.returncode}}</returncode>
+    {% if output.output | length < 10000 -%}
+    <output>
+    {{ output.output -}}
+    </output>
+    {%- else -%}
+    <warning>
+    The output of your last code was too long.
+    Please try a different approach that produces less output.
+    If you're reading a file, try reading specific line ranges.
+    If you're searching, use more selective patterns.
+    If you really need to see the full output, you can write it to a file and then read parts of it.
+    </warning>
+    {%- set elided_chars = output.output | length - 10000 -%}
+    <output_head>
+    {{ output.output[:5000] }}
+    </output_head>
+    <elided_chars>
+    {{ elided_chars }} characters elided
+    </elided_chars>
+    <output_tail>
+    {{ output.output[-5000:] }}
+    </output_tail>
+    {%- endif -%}
+
+  format_error_template: |
+    Please always provide EXACTLY ONE action in a javascript code block, found {{actions|length}} actions.
+
+    Please format your action in triple backticks as shown in <response_example>.
+
+    <response_example>
+    Here are some thoughts about why you want to perform the action.
+
+    ```javascript
+    // your code here
+    ```
+    </response_example>
+
+    If you have completed your assignment, please submit by running:
+
+    ```javascript
+    console.log("COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT");
+    ```
+
+  step_limit: 250
+  cost_limit: 3.
+
+environment:
+  cwd: "/testbed"
+  timeout: 60
+  execution_timeout_secs: 120
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+  environment_class: mcp_js_docker
+
+model:
+  model_name: "claude-sonnet-4-20250514"
+  model_kwargs:
+    drop_params: true
+    temperature: 0.0

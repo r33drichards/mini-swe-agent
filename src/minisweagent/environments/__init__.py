@@ -11,6 +11,8 @@ _ENVIRONMENT_MAPPING = {
     "local": "minisweagent.environments.local.LocalEnvironment",
     "swerex_docker": "minisweagent.environments.extra.swerex_docker.SwerexDockerEnvironment",
     "bubblewrap": "minisweagent.environments.extra.bubblewrap.BubblewrapEnvironment",
+    "mcp_js": "minisweagent.environments.mcp_js.McpJsEnvironment",
+    "mcp_js_docker": "minisweagent.environments.mcp_js.McpJsDockerEnvironment",
 }
 
 
